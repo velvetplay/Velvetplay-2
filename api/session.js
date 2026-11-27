@@ -6,6 +6,7 @@ const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 function sessionResponse(member) {
   const balanceSeconds = Math.max(0, Number(member.balance_seconds) || 0);
   return {
+    member_id: member.id,
     balance_seconds: balanceSeconds,
     minutes_balance: Math.ceil(balanceSeconds / 60),
     name: 'Guest Member'

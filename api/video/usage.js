@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const store = require('../../lib/supabase');
+const { posthogLog } = require('../../lib/posthog-logs');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -20,6 +21,7 @@ function createVideoUsageHandler({ db = store } = {}) {
 
         const videoSessionId = crypto.randomUUID();
         const result = await db.startVideoSession(member.id, videoSessionId, creatorName);
+        posthogLog('INFO', 'video_session_started');
         return res.status(200).json({ ok: true, ...result });
       }
 

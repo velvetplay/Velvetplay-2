@@ -1,6 +1,7 @@
 
 const crypto = require('crypto');
 const store = require('../../lib/supabase');
+const { posthogLog } = require('../../lib/posthog-logs');
 
 const {
   normalizeKenyanPhone,
@@ -196,6 +197,11 @@ function createStkHandler({
         data.CheckoutRequestID,
         data.MerchantRequestID || null
       );
+
+      posthogLog('INFO', 'payment_request_initiated', {
+        package_minutes: numericMinutes,
+        package_price_kes: numericAmount
+      });
 
       return res.status(200).json({
         payment_id: paymentId,

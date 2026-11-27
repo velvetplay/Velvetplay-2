@@ -10,6 +10,7 @@
 <link rel="preconnect" href="https://drive.google.com">
 <link rel="preconnect" href="https://www.dropbox.com">
 <title>VelvetPlay 18+ | Discover Creators</title>
+<script src="/api/posthog-init"></script>
 <script>
   window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
 </script>
@@ -994,6 +995,7 @@ document.getElementById("callScreen").classList.remove("show");document.body.sty
 }
 function finishCall(action){
 if(action==="answered"){
+captureEvent("call_answered");
 /* Request the viewer camera directly from the Answer tap. On Android,
    delaying getUserMedia until after network/video awaits can lose the
    browser's user-activation permission window. */
@@ -1006,6 +1008,7 @@ openCreatorVideo();
 return;
 }
 const name=currentCreator?currentCreator.name:"Creator";
+captureEvent("call_declined");
 closeCall();
 addActivity("Declined call · "+name);
 showPage("packages");
@@ -1068,6 +1071,7 @@ status.textContent=(error&&error.message)||"Could not start the video. Tap play 
 creatorPlayer.needTap(true);return;
 }
 activeVideoSessionId=session.video_session_id;
+captureEvent("creator_video_started");
 status.textContent="Loading video...";
 creatorPlayer.play();
 }
@@ -1124,6 +1128,7 @@ pendingVideoStopSessionId=id;
 stopVideoSession(id);
 }
 if(activeCreatorVideo){
+captureEvent("creator_video_completed");
 addActivity("Finished video · "+activeCreatorVideo.name);
 const status=document.getElementById("videoStatus");
 status.className="video-status";
@@ -1211,6 +1216,7 @@ if(!packages[index])return;
 clearTimeout(paymentTimer);
 currentPaymentId=null;
 selectedPackage=packages[index];selectedMethod="mpesa";
+captureEvent("minutes_package_selected",{package_minutes:selectedPackage.minutes,package_price_kes:selectedPackage.price});
 document.getElementById("checkoutMinutes").textContent=selectedPackage.minutes+" Minutes";
 document.getElementById("checkoutPrice").textContent="Ksh "+selectedPackage.price.toFixed(2);
 document.getElementById("paymentAmount").textContent="Ksh "+selectedPackage.price.toFixed(2);
@@ -1259,6 +1265,17 @@ showPayScreen("authorizeScreen");
 function paymentMessage(text,type=""){
 const el=document.getElementById("paymentMessage");el.className="message "+type;el.textContent=text;
 }
+function captureEvent(event,properties){
+try{
+if(window.posthog&&typeof window.posthog.capture==="function")window.posthog.capture(event,properties);
+}catch(e){}
+}
+function identifyMember(member){
+try{
+const memberId=typeof member?.member_id==="string"?member.member_id.trim():"";
+if(memberId&&window.posthog&&typeof window.posthog.identify==="function")window.posthog.identify(memberId);
+}catch(e){}
+}
 async function sendStkPrompt(){
 if(!selectedPackage||paymentInProgress)return;
 const phone=normalizeKenyanPhone(document.getElementById("phoneNumber").value);
@@ -1270,6 +1287,7 @@ document.getElementById("authMessage").textContent="Connecting to the payment se
 try{
 const session=await fetch("/api/session",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({})});
 if(!session.ok)throw new Error("Payment service is not available. Configure your backend first.");
+identifyMember(await session.json());
 const response=await fetch("/api/payments/stk",{
 method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},
 body:JSON.stringify({phone:phone,amount:selectedPackage.price,minutes:selectedPackage.minutes})
@@ -1278,6 +1296,7 @@ const data=await response.json().catch(()=>({}));
 if(!response.ok)throw new Error(data.message||data.error||"Could not start payment.");
 currentPaymentId=data.payment_id||data.paymentId||data.id;
 if(!currentPaymentId)throw new Error("No payment reference was returned by the server.");
+captureEvent("payment_prompt_requested",{package_minutes:selectedPackage.minutes,package_price_kes:selectedPackage.price,payment_method:"mpesa"});
 document.getElementById("authMessage").textContent="Payment request sent. Check your phone and enter your M-Pesa PIN on the official prompt.";
 addActivity("Payment request · KSh "+selectedPackage.price);
 checkPayment(selectedPackage);
@@ -1302,6 +1321,7 @@ const balance=Number(me.balance_seconds);
 if(Number.isFinite(balance))balanceSeconds=Math.max(0,balance);
 }
 updateMinutes();
+captureEvent("payment_completed",{package_minutes:Number(data.minutes)||pkg.minutes,package_price_kes:Number(data.amount_kes)||pkg.price,payment_method:"mpesa"});
 document.getElementById("authMessage").textContent="Payment confirmed. Your minutes balance has been refreshed.";
 addActivity("Payment confirmed");return;
 }
@@ -1316,7 +1336,7 @@ if(currentPaymentId===paymentId)paymentTimer=setTimeout(()=>checkPayment(pkg),40
 async function refreshMember(){
 try{
 const response=await fetch("/api/me",{credentials:"include"});if(!response.ok)return;
-const me=await response.json();const balance=Number(me.balance_seconds);
+const me=await response.json();identifyMember(me);const balance=Number(me.balance_seconds);
 if(Number.isFinite(balance))balanceSeconds=Math.max(0,balance);
 if(me.name||me.full_name)memberName=me.name||me.full_name;
 updateMinutes();renderProfile();

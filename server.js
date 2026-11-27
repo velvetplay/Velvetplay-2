@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const publicDir = path.join(__dirname, 'public');
-const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
+const MAX_BODY_SIZE = 1024 * 1024;
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -24,7 +24,6 @@ const mimeTypes = {
 
 function parseCookies(header) {
   const cookies = {};
-
   if (!header) return cookies;
 
   for (const part of header.split(';')) {
@@ -39,7 +38,7 @@ function parseCookies(header) {
     try {
       cookies[key] = decodeURIComponent(value);
     } catch {
-      // Ignore malformed cookies instead of crashing the request.
+      // Ignore malformed cookies.
     }
   }
 
@@ -48,6 +47,37 @@ function parseCookies(header) {
 
 async function readJsonBody(req) {
   const contentType = req.headers['content-type'] || '';
+
+  if (req.body !== undefined) {
+    if (!contentType.toLowerCase().includes('application/json')) {
+      return {};
+    }
+
+    if (typeof req.body === 'string') {
+      if (!req.body.trim()) return {};
+      try {
+        return JSON.parse(req.body);
+      } catch {
+        const error = new Error('Invalid JSON request body');
+        error.statusCode = 400;
+        throw error;
+      }
+    }
+
+    if (Buffer.isBuffer(req.body)) {
+      if (!req.body.length) return {};
+      try {
+        return JSON.parse(req.body.toString('utf8'));
+      } catch {
+        const error = new Error('Invalid JSON request body');
+        error.statusCode = 400;
+        throw error;
+      }
+    }
+
+    return req.body || {};
+  }
+
   const contentLength = Number(req.headers['content-length'] || 0);
 
   if (Number.isFinite(contentLength) && contentLength > MAX_BODY_SIZE) {
@@ -78,7 +108,6 @@ async function readJsonBody(req) {
   }
 
   const raw = Buffer.concat(chunks).toString('utf8');
-
   if (!raw.trim()) return {};
 
   try {
@@ -99,7 +128,6 @@ function createResponse(res) {
 
     json(payload) {
       if (res.writableEnded) return;
-
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.end(JSON.stringify(payload));
     },
@@ -145,7 +173,7 @@ function sendError(res, statusCode, message) {
 }
 
 async function serveStaticFile(res, pathname) {
-  let safePath = pathname === '/' ? 'index.html' : pathname.slice(1);
+  const safePath = pathname === '/' ? 'index.html' : pathname.slice(1);
 
   if (safePath.includes('\0')) {
     res.statusCode = 400;
@@ -165,7 +193,8 @@ async function serveStaticFile(res, pathname) {
 
   try {
     rootRealPath = await fs.promises.realpath(publicDir);
-  } catch {
+  } catch (error) {
+    console.error('Public directory error:', error);
     res.statusCode = 500;
     res.end('Server configuration error');
     return;
@@ -188,7 +217,6 @@ async function serveStaticFile(res, pathname) {
       throw new Error('Not a file');
     }
   } catch {
-    // Preserve the existing single-page application fallback.
     filePath = path.join(rootRealPath, 'index.html');
 
     try {
@@ -205,7 +233,8 @@ async function serveStaticFile(res, pathname) {
       if (!fallbackStats.isFile()) {
         throw new Error('Fallback is not a file');
       }
-    } catch {
+    } catch (error) {
+      console.error('Static fallback error:', error);
       res.statusCode = 404;
       res.end('Not found');
       return;
@@ -263,7 +292,6 @@ async function routeRequest(req, res) {
     return routeMap[pathname](req, createResponse(res));
   }
 
-  // Keep the fixed callback route before the parameterized payment route.
   if (pathname === '/api/payments/callback') {
     return require('./api/payments/callback.js')(
       req,
@@ -289,26 +317,27 @@ async function routeRequest(req, res) {
   return serveStaticFile(res, pathname);
 }
 
-function createServer() {
-  return http.createServer(async (req, res) => {
-    try {
-      await routeRequest(req, res);
-    } catch (error) {
-      if (error.statusCode === 413) {
-        sendError(res, 413, 'Request body too large');
-        return;
-      }
-
-      if (error.statusCode === 400) {
-        sendError(res, 400, 'Invalid request');
-        return;
-      }
-
-      console.error('Unhandled server error:', error);
-
-      sendError(res, 500, 'Internal server error');
+async function handler(req, res) {
+  try {
+    await routeRequest(req, res);
+  } catch (error) {
+    if (error.statusCode === 413) {
+      sendError(res, 413, 'Request body too large');
+      return;
     }
-  });
+
+    if (error.statusCode === 400) {
+      sendError(res, 400, 'Invalid request');
+      return;
+    }
+
+    console.error('Unhandled server error:', error);
+    sendError(res, 500, 'Internal server error');
+  }
+}
+
+function createServer() {
+  return http.createServer(handler);
 }
 
 if (require.main === module) {
@@ -319,7 +348,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = {
-  createServer,
-  routeRequest
-};
+module.exports = handler;
+module.exports.createServer = createServer;
+module.exports.routeRequest = routeRequest;
